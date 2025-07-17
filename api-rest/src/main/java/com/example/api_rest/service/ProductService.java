@@ -2,32 +2,29 @@ package com.example.api_rest.service;
 
 import com.example.api_rest.dto.ProductDetail;
 
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class ProductService {
 
     private final WebClient webClient;
 
-    @Value("${external.api.base:http://localhost:3001}")
-    private String EXTERNAL_API_BASE;
+    private final String EXTERNAL_API_BASE = "http://localhost:3001";
 
-    public ProductService(WebClient.Builder webClientBuilder) {
-        this.webClient = webClientBuilder.baseUrl(EXTERNAL_API_BASE).build();
+    public ProductService(WebClient.Builder builder) {
+        this.webClient = builder.baseUrl(EXTERNAL_API_BASE).build();
     }
 
     public List<ProductDetail> getSimilarProducts(String productId) {
         try {
-            String[] similarIds = webClient
-                    .get()
+            String[] similarIds = webClient.get()
                     .uri("/product/{id}/similarids", productId)
                     .retrieve()
                     .bodyToMono(String[].class)
@@ -35,19 +32,31 @@ public class ProductService {
 
             if (similarIds == null) return List.of();
 
-            return Flux.fromArray(similarIds)
-                    .flatMap(id ->
-                            webClient.get()
-                                    .uri("/product/{id}", id)
-                                    .retrieve()
-                                    .bodyToMono(ProductDetail.class)
-                                    .onErrorResume(WebClientResponseException.NotFound.class, e -> Mono.empty())
-                    )
-                    .collectList()
-                    .block();
+            return Arrays.stream(similarIds)
+                    .parallel()
+                    .map(this::getProductDetailSafely)
+                    .filter(Objects::nonNull)
+                    .toList();
 
         } catch (WebClientResponseException.NotFound e) {
-            throw new RuntimeException("Product not found", e);
+            throw new RuntimeException("Product not found");
+        }
+    }
+
+    @Cacheable("products")
+    public ProductDetail getProductDetail(String id) {
+        return webClient.get()
+                .uri("/product/{id}", id)
+                .retrieve()
+                .bodyToMono(ProductDetail.class)
+                .block();
+    }
+
+    private ProductDetail getProductDetailSafely(String id) {
+        try {
+            return getProductDetail(id);
+        } catch (WebClientResponseException.NotFound e) {
+            return null;
         }
     }
 }

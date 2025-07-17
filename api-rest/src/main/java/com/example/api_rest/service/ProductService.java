@@ -2,47 +2,52 @@ package com.example.api_rest.service;
 
 import com.example.api_rest.dto.ProductDetail;
 
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+
 import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 
 @Service
 public class ProductService {
 
-    private final ExternalProductClient externalClient;
+    private final WebClient webClient;
 
-    public ProductService(ExternalProductClient externalClient) {
-        this.externalClient = externalClient;
+    @Value("${external.api.base:http://localhost:3001}")
+    private String EXTERNAL_API_BASE;
+
+    public ProductService(WebClient.Builder webClientBuilder) {
+        this.webClient = webClientBuilder.baseUrl(EXTERNAL_API_BASE).build();
     }
 
     public List<ProductDetail> getSimilarProducts(String productId) {
-        List<ProductDetail> result = new ArrayList<>();
-
         try {
-            String[] similarIds = externalClient.getSimilarIds(productId);
+            String[] similarIds = webClient
+                    .get()
+                    .uri("/product/{id}/similarids", productId)
+                    .retrieve()
+                    .bodyToMono(String[].class)
+                    .block();
 
-            if (similarIds != null) {
-                List<CompletableFuture<Optional<ProductDetail>>> futures = new ArrayList<>();
+            if (similarIds == null) return List.of();
 
-                for (String id : similarIds) {
-                    futures.add(externalClient.getProductDetail(id));
-                }
+            return Flux.fromArray(similarIds)
+                    .flatMap(id ->
+                            webClient.get()
+                                    .uri("/product/{id}", id)
+                                    .retrieve()
+                                    .bodyToMono(ProductDetail.class)
+                                    .onErrorResume(WebClientResponseException.NotFound.class, e -> Mono.empty())
+                    )
+                    .collectList()
+                    .block();
 
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-                for (CompletableFuture<Optional<ProductDetail>> future : futures) {
-                    future.join().ifPresent(result::add);
-                }
-            }
-
-            return result;
-
-        } catch (HttpClientErrorException.NotFound e) {
-            throw new RuntimeException("Product not found");
+        } catch (WebClientResponseException.NotFound e) {
+            throw new RuntimeException("Product not found", e);
         }
     }
 }

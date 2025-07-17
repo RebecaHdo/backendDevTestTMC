@@ -1,3 +1,15 @@
+package com.example.api_rest.service;
+
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import com.example.api_rest.dto.ProductDetail;
+
 @Service
 public class ExternalProductClient {
 
@@ -7,8 +19,7 @@ public class ExternalProductClient {
     public String[] getSimilarIds(String productId) {
         return restTemplate.getForObject(
                 EXTERNAL_API_BASE + "/product/" + productId + "/similarids",
-                String[].class
-        );
+                String[].class);
     }
 
     @Async("taskExecutor")
@@ -16,8 +27,7 @@ public class ExternalProductClient {
         try {
             ProductDetail detail = restTemplate.getForObject(
                     EXTERNAL_API_BASE + "/product/" + id,
-                    ProductDetail.class
-            );
+                    ProductDetail.class);
             return CompletableFuture.completedFuture(Optional.ofNullable(detail));
         } catch (HttpClientErrorException.NotFound e) {
             return CompletableFuture.completedFuture(Optional.empty());
